@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TestChimp Semantic Graph</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --border: #e5e5e5;
+      --bg: #fafafa;
+      --text: #1a1a1a;
+      --muted: #666;
+      --accent: #1677ff;
+    }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; height: 100vh; color: var(--text); }
+    header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+    header h1 { margin: 0; font-size: 16px; font-weight: 600; flex: 1; }
+    .scope-label { font-size: 13px; color: var(--muted); }
+    main { flex: 1; display: flex; min-height: 0; }
+    aside { width: 300px; border-right: 1px solid var(--border); overflow: auto; padding: 8px 0; font-size: 13px; }
+    #canvas { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+    .toolbar { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; background: #fff; }
+    .toggle-btn { padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; }
+    .toggle-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    #graph-wrap { flex: 1; position: relative; min-height: 0; }
+    #graph-root { width: 100%; height: 100%; }
+    #list-wrap { flex: 1; overflow: auto; padding: 12px; display: none; }
+    .cluster-block { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
+    .cluster-head { padding: 8px 12px; font-weight: 600; background: #f5f5f5; border-bottom: 1px solid var(--border); }
+    .cluster-test { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    .cluster-test:hover { background: #f9f9f9; }
+    .cluster-test:last-child { border-bottom: none; }
+    .cluster-legend { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
+    .legend-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; color: #fff; }
+    footer { padding: 8px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); text-align: center; }
+    .tree-folder, .tree-file { padding: 4px 12px; cursor: pointer; user-select: none; }
+    .tree-folder:hover, .tree-file:hover { background: #f0f0f0; }
+    .tree-folder.selected, .tree-file.selected { background: #e6f4ff; color: var(--accent); }
+    .tree-folder { font-weight: 500; }
+    .tree-file { padding-left: 24px; color: var(--muted); font-size: 12px; }
+    .tree-nested { padding-left: 12px; }
+    .empty { color: var(--muted); padding: 24px; text-align: center; }
+    .stats { font-size: 12px; color: var(--muted); padding: 0 12px 8px; }
+    #popover {
+      display: none; position: fixed; z-index: 1000; background: #fff; border: 1px solid var(--border);
+      border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.12); width: 320px; max-height: 400px; overflow: auto; padding: 12px;
+    }
+    #popover h3 { margin: 0 0 8px; font-size: 14px; }
+    #popover .close { float: right; cursor: pointer; border: none; background: none; font-size: 18px; line-height: 1; }
+    .sim-row { padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px; }
+    .sim-row:last-child { border-bottom: none; }
+    .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #e6f4ff; color: var(--accent); margin-top: 4px; }
+    .tag.dup { background: #fff7e6; color: #d46b08; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Semantic Graph</h1>
+    <span class="scope-label" id="scope-label">Select a folder or file</span>
+  </header>
+  <main>
+    <aside id="tree"><p class="empty">Loading…</p></aside>
+    <div id="canvas">
+      <div class="toolbar">
+        <button class="toggle-btn active" data-view="graph" type="button">Graph</button>
+        <button class="toggle-btn" data-view="list" type="button">Clusters</button>
+      </div>
+      <div class="cluster-legend" id="legend"></div>
+      <div id="graph-wrap"><div id="graph-root"></div></div>
+      <div id="list-wrap"></div>
+      <div class="stats" id="stats"></div>
+    </div>
+  </main>
+  <footer>Built by TestChimp — Git-Native QA Governance platform for agentic teams</footer>
+  <div id="popover"><button class="close" type="button" aria-label="Close">&times;</button><h3 id="popover-title"></h3><div id="popover-body"></div></div>
+
+  <script>
+    const COLORS = ['#1677ff','#52c41a','#fa8c16','#eb2f96','#722ed1','#13c2c2','#faad14','#2f54eb','#a0d911','#f5222d'];
+
+    let scope = { type: 'root', folder: '', file: '' };
+    let viewMode = 'graph';
+    let graphData = { nodes: [], edges: [], clusters: [] };
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function renderTreeNode(node, depth) {
+      const pad = depth ? `<div class="tree-nested">` : '';
+      const endPad = depth ? `</div>` : '';
+      let html = '';
+      for (const child of node.children) {
+        const sel = scope.type === 'folder' && scope.folder === child.path ? ' selected' : '';
+        html += `<div class="tree-folder${sel}" data-folder="${esc(child.path)}">📁 ${esc(child.name)}</div>`;
+        html += renderTreeNode(child, depth + 1);
+      }
+      for (const f of node.files) {
+        const sel = scope.type === 'file' && scope.file === f.relPath ? ' selected' : '';
+        html += `<div class="tree-file${sel}" data-file="${esc(f.relPath)}">📄 ${esc(f.title)} <span style="opacity:.6">(${f.testCount})</span></div>`;
+      }
+      return pad + html + endPad;
+    }
+
+    async function loadTree() {
+      const res = await fetch('/api/tree');
+      const data = await res.json();
+      const treeEl = document.getElementById('tree');
+      if (!data.testCount) {
+        treeEl.innerHTML = '<p class="empty">No embeddings yet. Run <code>npx @testchimp/semantic-graph index --tests-dir ./tests</code></p>';
+        return;
+      }
+      const rootBtn = scope.type === 'root'
+        ? '<div class="tree-folder selected" data-folder="">📁 All tests</div>'
+        : '<div class="tree-folder" data-folder="">📁 All tests</div>';
+      treeEl.innerHTML = rootBtn + renderTreeNode(data.tree, 0);
+      treeEl.querySelectorAll('[data-folder]').forEach(el => {
+        el.addEventListener('click', () => {
+          scope = { type: 'folder', folder: el.dataset.folder || '', file: '' };
+          updateScopeLabel();
+          loadTree();
+          loadGraph();
+        });
+      });
+      treeEl.querySelectorAll('[data-file]').forEach(el => {
+        el.addEventListener('click', () => {
+          scope = { type: 'file', folder: '', file: el.dataset.file };
+          updateScopeLabel();
+          loadTree();
+          loadGraph();
+        });
+      });
+    }
+
+    function updateScopeLabel() {
+      const el = document.getElementById('scope-label');
+      if (scope.type === 'file') el.textContent = scope.file;
+      else if (scope.type === 'folder' && scope.folder) el.textContent = scope.folder;
+      else el.textContent = 'All tests';
+    }
+
+    function graphUrl() {
+      const params = new URLSearchParams();
+      if (scope.type === 'file') params.set('file', scope.file);
+      else if (scope.type === 'folder' && scope.folder) params.set('folder', scope.folder);
+      params.set('view', viewMode);
+      return '/api/graph?' + params.toString();
+    }
+
+    async function loadGraph() {
+      const res = await fetch(graphUrl());
+      graphData = await res.json();
+      renderLegend();
+      renderStats();
+      if (viewMode === 'graph') renderGraph();
+      else renderList();
+    }
+
+    function renderLegend() {
+      const el = document.getElementById('legend');
+      if (!graphData.clusters?.length || viewMode !== 'graph') {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML = graphData.clusters.map(c =>
+        `<span class="legend-tag" style="background:${COLORS[c.clusterId % COLORS.length]}">${esc(c.label || ('Cluster ' + (c.clusterId + 1)))}</span>`
+      ).join('');
+    }
+
+    function renderStats() {
+      const el = document.getElementById('stats');
+      const n = graphData.nodes?.length || 0;
+      const e = graphData.edges?.length || 0;
+      el.textContent = n ? `${n} tests · ${e} similarity links` : '';
+    }
+
+    function renderGraph() {
+      document.getElementById('graph-wrap').style.display = 'block';
+      document.getElementById('list-wrap').style.display = 'none';
+      const root = document.getElementById('graph-root');
+      root.innerHTML = '';
+      const nodes = (graphData.nodes || []).filter(n => n.x != null && n.y != null);
+      if (!nodes.length) {
+        root.innerHTML = '<p class="empty">Not enough indexed tests in this scope.</p>';
+        return;
+      }
+      const rect = root.getBoundingClientRect();
+      const width = rect.width || 800;
+      const height = Math.max(400, rect.height || 480);
+      const margin = { top: 16, right: 16, bottom: 16, left: 16 };
+      const innerW = width - margin.left - margin.right;
+      const innerH = height - margin.top - margin.bottom;
+      const xs = nodes.map(n => n.x);
+      const ys = nodes.map(n => n.y);
+      const padX = (Math.max(...xs) - Math.min(...xs)) * 0.08 || 1;
+      const padY = (Math.max(...ys) - Math.min(...ys)) * 0.08 || 1;
+      const xScale = d3.scaleLinear().domain([Math.min(...xs) - padX, Math.max(...xs) + padX]).range([0, innerW]);
+      const yScale = d3.scaleLinear().domain([Math.min(...ys) - padY, Math.max(...ys) + padY]).range([innerH, 0]);
+      const nodeById = new Map(nodes.map(n => [n.testId, n]));
+      const svg = d3.select(root).append('svg').attr('width', width).attr('height', height);
+      const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+      const zoomLayer = g.append('g');
+      const zoom = d3.zoom().scaleExtent([0.4, 4]).on('zoom', ev => zoomLayer.attr('transform', ev.transform));
+      svg.call(zoom);
+      zoomLayer.selectAll('line').data((graphData.edges || []).filter(e => nodeById.has(e.sourceTestId) && nodeById.has(e.targetTestId)))
+        .join('line')
+        .attr('x1', d => xScale(nodeById.get(d.sourceTestId).x))
+        .attr('y1', d => yScale(nodeById.get(d.sourceTestId).y))
+        .attr('x2', d => xScale(nodeById.get(d.targetTestId).x))
+        .attr('y2', d => yScale(nodeById.get(d.targetTestId).y))
+        .attr('stroke', '#d9d9d9')
+        .attr('stroke-opacity', d => 0.25 + d.similarity * 0.55)
+        .attr('stroke-width', d => 0.5 + d.similarity * 2);
+      const nodeG = zoomLayer.selectAll('g.node').data(nodes, d => d.testId).join('g')
+        .attr('transform', d => `translate(${xScale(d.x)},${yScale(d.y)})`)
+        .style('cursor', 'pointer');
+      nodeG.append('circle').attr('r', 7)
+        .attr('fill', d => COLORS[(d.clusterId ?? 0) % COLORS.length])
+        .attr('stroke', '#fff').attr('stroke-width', 1.5);
+      nodeG.append('title').text(d => d.title);
+      nodeG.on('click', (ev, d) => showSimilar(d, ev.clientX, ev.clientY));
+    }
+
+    function renderList() {
+      document.getElementById('graph-wrap').style.display = 'none';
+      document.getElementById('list-wrap').style.display = 'block';
+      const el = document.getElementById('list-wrap');
+      const clusters = graphData.clusters || [];
+      if (!clusters.length) {
+        el.innerHTML = '<p class="empty">No clusters in this scope.</p>';
+        return;
+      }
+      const nodeById = new Map((graphData.nodes || []).map(n => [n.testId, n]));
+      el.innerHTML = clusters.map(c => {
+        const tests = (c.testIds || []).map(id => nodeById.get(id)).filter(Boolean);
+        return `<div class="cluster-block">
+          <div class="cluster-head">${esc(c.label || ('Cluster ' + (c.clusterId + 1)))}</div>
+          ${tests.map(t => `<div class="cluster-test" data-test-id="${esc(t.testId)}" data-test-title="${esc(t.title)}">${esc(t.title)}<div style="font-size:11px;color:#888">${esc((t.folderPath||[]).join(' / '))}</div></div>`).join('')}
+        </div>`;
+      }).join('');
+      el.querySelectorAll('.cluster-test').forEach(row => {
+        row.addEventListener('click', ev => showSimilar({ testId: row.dataset.testId, title: row.dataset.testTitle }, ev.clientX, ev.clientY));
+      });
+    }
+
+    async function showSimilar(node, x, y) {
+      const pop = document.getElementById('popover');
+      document.getElementById('popover-title').textContent = 'Similar to ' + node.title;
+      document.getElementById('popover-body').innerHTML = '<p style="color:#888">Loading…</p>';
+      pop.style.display = 'block';
+      pop.style.left = Math.min(x + 8, window.innerWidth - 340) + 'px';
+      pop.style.top = Math.min(y + 8, window.innerHeight - 420) + 'px';
+      const res = await fetch('/api/similar?testId=' + encodeURIComponent(node.testId));
+      const data = await res.json();
+      const entries = data.entries || [];
+      if (!entries.length) {
+        document.getElementById('popover-body').innerHTML = '<p style="color:#888">No similar tests above threshold.</p>';
+        return;
+      }
+      document.getElementById('popover-body').innerHTML = entries.map(e =>
+        `<div class="sim-row"><strong>${esc(e.title)}</strong><div style="color:#888">${esc((e.folderPath||[]).join(' / '))}</div>
+        <span class="tag">${Math.round(e.similarity * 100)}% similar</span>${e.potentialDuplicate ? ' <span class="tag dup">Potential duplicate</span>' : ''}</div>`
+      ).join('');
+    }
+
+    document.querySelector('.close').addEventListener('click', () => {
+      document.getElementById('popover').style.display = 'none';
+    });
+    document.addEventListener('click', ev => {
+      const pop = document.getElementById('popover');
+      if (pop.style.display === 'block' && !pop.contains(ev.target)) pop.style.display = 'none';
+    });
+
+    document.querySelectorAll('.toggle-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        viewMode = btn.dataset.view;
+        loadGraph();
+      });
+    });
+
+    window.addEventListener('resize', () => { if (viewMode === 'graph') renderGraph(); });
+
+    scope = { type: 'root', folder: '', file: '' };
+    updateScopeLabel();
+    loadTree().then(() => loadGraph());
+  </script>
+</body>
+</html>

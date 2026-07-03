@@ -1,0 +1,13 @@
+{
+  "name": "semantic-graph",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @testchimp/semantic-graph-core && npm run build -w @testchimp/semantic-graph-viz && npm run build -w @testchimp/semantic-graph",
+    "build:core": "npm run build -w @testchimp/semantic-graph-core",
+    "clean": "npm run clean -w @testchimp/semantic-graph-core && npm run clean -w @testchimp/semantic-graph",
+    "pack:check": "npm run build && npm pack -w @testchimp/semantic-graph-core --dry-run && npm pack -w @testchimp/semantic-graph --dry-run"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "@testchimp/semantic-graph",
+  "version": "0.1.0",
+  "description": "CLI for test suite semantic similarity graph — index embeddings and visualize duplicates",
+  "bin": {
+    "semantic-graph": "./dist/cli.js"
+  },
+  "main": "dist/cli.js",
+  "files": [
+    "dist",
+    "static"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/copy-viz.cjs",
+    "clean": "rm -rf dist static",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@testchimp/semantic-graph-core": "0.1.0",
+    "express": "^4.21.2",
+    "openai": "^4.77.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TestChimp/semantic-graph.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "testchimp",
+    "playwright",
+    "testing",
+    "embeddings",
+    "semantic-similarity",
+    "duplicate-tests"
+  ]
+}
