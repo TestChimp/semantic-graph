@@ -43,3 +43,32 @@ export function clusterTitles(
   });
   return map;
 }
+
+const STOPWORDS = new Set([
+  'test', 'tests', 'should', 'the', 'a', 'an', 'and', 'or', 'for', 'with', 'when',
+  'that', 'this', 'is', 'are', 'to', 'of', 'in', 'on', 'at', 'be', 'can', 'it',
+  'as', 'by', 'from', 'not', 'has', 'have', 'will', 'user', 'users', 'verify',
+  'validates', 'validate', 'checks', 'check',
+]);
+
+/** Derive a short theme label from test titles when LLM naming fails. */
+export function heuristicClusterLabel(titles: string[]): string | null {
+  const counts = new Map<string, number>();
+  for (const title of titles) {
+    const words = title.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+    for (const word of words) {
+      if (word.length < 3 || STOPWORDS.has(word)) continue;
+      counts.set(word, (counts.get(word) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) return null;
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [word, count] of counts) {
+    if (count > bestCount) {
+      bestCount = count;
+      best = word;
+    }
+  }
+  return best;
+}

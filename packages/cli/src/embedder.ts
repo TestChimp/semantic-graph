@@ -66,9 +66,3 @@ export async function embedTexts(config: EnvConfig, texts: string[]): Promise<nu
   }
   return embedViaVoyage(config, texts);
 }
-
-function toPgVector(vec: number[]): string {
-  return '[' + vec.join(',') + ']';
-}
-
-export { toPgVector };

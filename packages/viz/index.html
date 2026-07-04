@@ -18,6 +18,7 @@
     header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
     header h1 { margin: 0; font-size: 16px; font-weight: 600; flex: 1; }
     .scope-label { font-size: 13px; color: var(--muted); }
+    .scope-label.clickable { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
     main { flex: 1; display: flex; min-height: 0; }
     aside { width: 300px; border-right: 1px solid var(--border); overflow: auto; padding: 8px 0; font-size: 13px; }
     #canvas { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
@@ -26,7 +27,7 @@
     .toggle-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     #graph-wrap { flex: 1; position: relative; min-height: 0; }
     #graph-root { width: 100%; height: 100%; }
-    #list-wrap { flex: 1; overflow: auto; padding: 12px; display: none; }
+    #list-wrap { flex: 1; overflow: auto; padding: 12px; display: none; position: relative; }
     .cluster-block { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
     .cluster-head { padding: 8px 12px; font-weight: 600; background: #f5f5f5; border-bottom: 1px solid var(--border); }
     .cluster-test { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
@@ -53,12 +54,26 @@
     .sim-row:last-child { border-bottom: none; }
     .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #e6f4ff; color: var(--accent); margin-top: 4px; }
     .tag.dup { background: #fff7e6; color: #d46b08; }
+    @keyframes tc-logo-blink {
+      0% { filter: grayscale(100%); opacity: 0.5; }
+      50% { filter: grayscale(0%); opacity: 1; }
+      100% { filter: grayscale(100%); opacity: 0.5; }
+    }
+    .tc-loading {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 12px; min-height: 200px; padding: 24px; color: var(--muted); font-size: 13px;
+    }
+    .tc-loading-overlay {
+      position: absolute; inset: 0; background: rgba(250, 250, 250, 0.92);
+      display: flex; align-items: center; justify-content: center; z-index: 10;
+    }
+    .tc-logo { width: 120px; height: auto; animation: tc-logo-blink 2s infinite ease-in-out; }
   </style>
 </head>
 <body>
   <header>
     <h1>Semantic Graph</h1>
-    <span class="scope-label" id="scope-label">Select a folder or file</span>
+    <span class="scope-label" id="scope-label">All tests</span>
   </header>
   <main>
     <aside id="tree"><p class="empty">Loading…</p></aside>
@@ -82,9 +97,42 @@
     let scope = { type: 'root', folder: '', file: '' };
     let viewMode = 'graph';
     let graphData = { nodes: [], edges: [], clusters: [] };
+    let graphLoading = false;
+    let graphLoadSeq = 0;
 
     function esc(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function loadingHtml(message) {
+      return `<div class="tc-loading"><img class="tc-logo" src="ChimpLogoRed.svg" alt="TestChimp Logo" /><span>${esc(message)}</span></div>`;
+    }
+
+    function showGraphLoading(message) {
+      graphLoading = true;
+      for (const id of ['graph-wrap', 'list-wrap']) {
+        const el = document.getElementById(id);
+        let overlay = el.querySelector('.tc-loading-overlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.className = 'tc-loading-overlay';
+          el.appendChild(overlay);
+        }
+        overlay.innerHTML = loadingHtml(message);
+        overlay.style.display = 'flex';
+      }
+    }
+
+    function hideGraphLoading() {
+      graphLoading = false;
+      document.querySelectorAll('.tc-loading-overlay').forEach(el => {
+        el.style.display = 'none';
+      });
+    }
+
+    function clusterLabel(c) {
+      const label = c.label || ('Cluster ' + (c.clusterId + 1));
+      return /^cluster$/i.test(label) ? ('Cluster ' + (c.clusterId + 1)) : label;
     }
 
     function renderTreeNode(node, depth) {
@@ -103,18 +151,23 @@
       return pad + html + endPad;
     }
 
+    function resetToRootScope() {
+      scope = { type: 'root', folder: '', file: '' };
+      updateScopeLabel();
+      loadTree();
+      loadGraph();
+    }
+
     async function loadTree() {
+      const treeEl = document.getElementById('tree');
+      treeEl.innerHTML = loadingHtml('Loading folder tree…');
       const res = await fetch('/api/tree');
       const data = await res.json();
-      const treeEl = document.getElementById('tree');
       if (!data.testCount) {
         treeEl.innerHTML = '<p class="empty">No embeddings yet. Run <code>npx @testchimp/semantic-graph index --tests-dir ./tests</code></p>';
         return;
       }
-      const rootBtn = scope.type === 'root'
-        ? '<div class="tree-folder selected" data-folder="">📁 All tests</div>'
-        : '<div class="tree-folder" data-folder="">📁 All tests</div>';
-      treeEl.innerHTML = rootBtn + renderTreeNode(data.tree, 0);
+      treeEl.innerHTML = renderTreeNode(data.tree, 0);
       treeEl.querySelectorAll('[data-folder]').forEach(el => {
         el.addEventListener('click', () => {
           scope = { type: 'folder', folder: el.dataset.folder || '', file: '' };
@@ -135,9 +188,19 @@
 
     function updateScopeLabel() {
       const el = document.getElementById('scope-label');
-      if (scope.type === 'file') el.textContent = scope.file;
-      else if (scope.type === 'folder' && scope.folder) el.textContent = scope.folder;
-      else el.textContent = 'All tests';
+      if (scope.type === 'file') {
+        el.textContent = scope.file;
+        el.classList.add('clickable');
+        el.title = 'View all tests';
+      } else if (scope.type === 'folder' && scope.folder) {
+        el.textContent = scope.folder;
+        el.classList.add('clickable');
+        el.title = 'View all tests';
+      } else {
+        el.textContent = 'All tests';
+        el.classList.remove('clickable');
+        el.title = '';
+      }
     }
 
     function graphUrl() {
@@ -149,12 +212,39 @@
     }
 
     async function loadGraph() {
-      const res = await fetch(graphUrl());
-      graphData = await res.json();
-      renderLegend();
-      renderStats();
-      if (viewMode === 'graph') renderGraph();
-      else renderList();
+      const seq = ++graphLoadSeq;
+      showGraphLoading('Loading semantic graph…');
+      let loaded = false;
+      try {
+        const res = await fetch(graphUrl());
+        if (seq !== graphLoadSeq) return;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || res.statusText || 'Failed to load graph');
+        }
+        graphData = await res.json();
+        renderLegend();
+        renderStats();
+        loaded = true;
+      } catch (e) {
+        if (seq !== graphLoadSeq) return;
+        const msg = e instanceof Error ? e.message : 'Failed to load graph';
+        if (viewMode === 'graph') {
+          document.getElementById('graph-root').innerHTML = `<p class="empty">${esc(msg)}</p>`;
+        } else {
+          document.getElementById('list-wrap').innerHTML = `<p class="empty">${esc(msg)}</p>`;
+        }
+      } finally {
+        if (seq !== graphLoadSeq) return;
+        hideGraphLoading();
+        if (loaded) {
+          if (viewMode === 'graph') {
+            requestAnimationFrame(() => renderGraph());
+          } else {
+            renderList();
+          }
+        }
+      }
     }
 
     function renderLegend() {
@@ -164,7 +254,7 @@
         return;
       }
       el.innerHTML = graphData.clusters.map(c =>
-        `<span class="legend-tag" style="background:${COLORS[c.clusterId % COLORS.length]}">${esc(c.label || ('Cluster ' + (c.clusterId + 1)))}</span>`
+        `<span class="legend-tag" style="background:${COLORS[c.clusterId % COLORS.length]}">${esc(clusterLabel(c))}</span>`
       ).join('');
     }
 
@@ -182,7 +272,11 @@
       root.innerHTML = '';
       const nodes = (graphData.nodes || []).filter(n => n.x != null && n.y != null);
       if (!nodes.length) {
-        root.innerHTML = '<p class="empty">Not enough indexed tests in this scope.</p>';
+        const total = graphData.nodes?.length || 0;
+        const msg = total
+          ? 'No graph layout for this scope. Try the Clusters view or select a folder with more tests.'
+          : 'No indexed tests in this scope.';
+        root.innerHTML = `<p class="empty">${msg}</p>`;
         return;
       }
       const rect = root.getBoundingClientRect();
@@ -219,7 +313,10 @@
         .attr('fill', d => COLORS[(d.clusterId ?? 0) % COLORS.length])
         .attr('stroke', '#fff').attr('stroke-width', 1.5);
       nodeG.append('title').text(d => d.title);
-      nodeG.on('click', (ev, d) => showSimilar(d, ev.clientX, ev.clientY));
+      nodeG.on('click', (ev, d) => {
+        ev.stopPropagation();
+        showSimilar(d, ev.clientX, ev.clientY);
+      });
     }
 
     function renderList() {
@@ -235,12 +332,15 @@
       el.innerHTML = clusters.map(c => {
         const tests = (c.testIds || []).map(id => nodeById.get(id)).filter(Boolean);
         return `<div class="cluster-block">
-          <div class="cluster-head">${esc(c.label || ('Cluster ' + (c.clusterId + 1)))}</div>
+          <div class="cluster-head">${esc(clusterLabel(c))}</div>
           ${tests.map(t => `<div class="cluster-test" data-test-id="${esc(t.testId)}" data-test-title="${esc(t.title)}">${esc(t.title)}<div style="font-size:11px;color:#888">${esc((t.folderPath||[]).join(' / '))}</div></div>`).join('')}
         </div>`;
       }).join('');
       el.querySelectorAll('.cluster-test').forEach(row => {
-        row.addEventListener('click', ev => showSimilar({ testId: row.dataset.testId, title: row.dataset.testTitle }, ev.clientX, ev.clientY));
+        row.addEventListener('click', ev => {
+          ev.stopPropagation();
+          showSimilar({ testId: row.dataset.testId, title: row.dataset.testTitle }, ev.clientX, ev.clientY);
+        });
       });
     }
 
@@ -264,12 +364,17 @@
       ).join('');
     }
 
-    document.querySelector('.close').addEventListener('click', () => {
+    document.querySelector('.close').addEventListener('click', ev => {
+      ev.stopPropagation();
       document.getElementById('popover').style.display = 'none';
     });
     document.addEventListener('click', ev => {
       const pop = document.getElementById('popover');
       if (pop.style.display === 'block' && !pop.contains(ev.target)) pop.style.display = 'none';
+    });
+
+    document.getElementById('scope-label').addEventListener('click', () => {
+      if (scope.type !== 'root') resetToRootScope();
     });
 
     document.querySelectorAll('.toggle-btn').forEach(btn => {
@@ -281,9 +386,11 @@
       });
     });
 
-    window.addEventListener('resize', () => { if (viewMode === 'graph') renderGraph(); });
+    window.addEventListener('resize', () => {
+      if (graphLoading || !(graphData.nodes || []).length) return;
+      if (viewMode === 'graph') renderGraph();
+    });
 
-    scope = { type: 'root', folder: '', file: '' };
     updateScopeLabel();
     loadTree().then(() => loadGraph());
   </script>

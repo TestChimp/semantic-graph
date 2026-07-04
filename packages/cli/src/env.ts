@@ -6,7 +6,6 @@ import {
 export type Provider = 'openai' | 'anthropic';
 
 export interface EnvConfig {
-  databaseUrl: string;
   /** LLM provider (cluster naming, etc.). */
   provider: Provider;
   /** API key for the LLM provider (`API_KEY`). */
@@ -43,13 +42,11 @@ function readApiKey(): string | undefined {
 }
 
 export function loadEnvConfig(): EnvConfig {
-  const databaseUrl = process.env.DATABASE_URL;
   const provider = readProvider();
   const apiKey = readApiKey();
   const voyageApiKey = process.env.VOYAGE_API_KEY;
 
   const missing: string[] = [];
-  if (!databaseUrl) missing.push('DATABASE_URL');
   if (!provider) missing.push('PROVIDER (openai | anthropic)');
   if (!apiKey) missing.push('API_KEY (LLM provider key)');
   if (provider === 'anthropic' && !voyageApiKey) {
@@ -61,7 +58,6 @@ export function loadEnvConfig(): EnvConfig {
     for (const m of missing) console.error(`  - ${m}`);
     console.error(`
 Example (OpenAI — one key for embeddings + LLM):
-  export DATABASE_URL="postgresql://user:pass@localhost:5432/tests"
   export PROVIDER=openai
   export API_KEY=sk-...
   export EMBEDDING_MODEL=text-embedding-3-small   # optional
@@ -70,7 +66,7 @@ Example (OpenAI — one key for embeddings + LLM):
 Example (Claude + Voyage — Anthropic has no embedding API):
   export PROVIDER=anthropic
   export API_KEY=sk-ant-...                       # Anthropic key (LLM / cluster naming)
-  export VOYAGE_API_KEY=pa-...                  # Voyage key (index embeddings)
+  export VOYAGE_API_KEY=pa-...                    # Voyage key (embeddings)
   export EMBEDDING_MODEL=voyage-4                 # optional
   export LLM_MODEL=claude-3-5-haiku-latest        # optional
 `);
@@ -78,7 +74,6 @@ Example (Claude + Voyage — Anthropic has no embedding API):
   }
 
   return {
-    databaseUrl: databaseUrl!,
     provider: provider!,
     apiKey: apiKey!,
     voyageApiKey: voyageApiKey || undefined,

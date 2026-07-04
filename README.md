@@ -7,24 +7,24 @@ Test suite semantic similarity — find duplicate and related tests via embeddin
 | Package | Description |
 |---------|-------------|
 | `@testchimp/semantic-graph-core` | Parser (vendored), embedding text, cosine similarity, UMAP layout, DBSCAN clusters |
-| `@testchimp/semantic-graph` | CLI: `index` and `visualize` |
+| `@testchimp/semantic-graph` | CLI: `visualize` (scan → embed → serve UI) |
 | `@testchimp/semantic-graph-viz` | Static freebie UI (folder tree + graph / clusters) |
 
 ## Quick start (OpenAI)
 
-One API key for embeddings and LLM (cluster naming):
+One API key for embeddings and LLM (cluster naming). No database required — embeddings are computed in memory each run.
 
 ```bash
-export DATABASE_URL="postgresql://user:pass@localhost:5432/tests"  # requires pgvector
 export PROVIDER=openai
 export API_KEY=sk-...
 # optional:
 # export EMBEDDING_MODEL=text-embedding-3-small
 # export LLM_MODEL=gpt-5-nano
 
-npx @testchimp/semantic-graph index --tests-dir ./tests
-npx @testchimp/semantic-graph visualize --port 3847
+npx @testchimp/semantic-graph visualize --tests-dir ./tests
 ```
+
+The CLI scans your tests, embeds them (with progress on TTY), then prints the UI URL (default port `3859`, or the next free port).
 
 ## Claude + Voyage (Anthropic LLM)
 
@@ -33,20 +33,31 @@ Anthropic does not ship an embedding API. Use **Voyage** for embeddings and **Cl
 ```bash
 export PROVIDER=anthropic
 export API_KEY=sk-ant-...          # Anthropic — cluster naming / LLM
-export VOYAGE_API_KEY=pa-...       # Voyage — index embeddings
+export VOYAGE_API_KEY=pa-...       # Voyage — embeddings
 # optional:
 # export EMBEDDING_MODEL=voyage-4
 # export LLM_MODEL=claude-3-5-haiku-latest
 
-npx @testchimp/semantic-graph index --tests-dir ./tests
-npx @testchimp/semantic-graph visualize --port 3847
+npx @testchimp/semantic-graph visualize --tests-dir ./tests
 ```
+
+## Commands
+
+```bash
+npx @testchimp/semantic-graph visualize --tests-dir <path> [--port <n>] [--verbose]
+npx @testchimp/semantic-graph help
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--tests-dir` | yes | Root folder to scan for `*.spec/test.(ts\|js\|mjs\|cjs)` |
+| `--port` | no | Listen port (default `3859`; scans upward if busy) |
+| `--verbose` / `-v` | no | Diagnostics to stderr |
 
 ## Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | yes | Postgres with pgvector |
 | `PROVIDER` | yes | `openai` \| `anthropic` |
 | `API_KEY` | yes | LLM provider API key |
 | `VOYAGE_API_KEY` | when `PROVIDER=anthropic` | Voyage API key for embeddings |
