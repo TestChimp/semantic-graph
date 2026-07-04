@@ -1,7 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { clusterEmbeddings, clusterTitles, heuristicClusterLabel } from './cluster';
-import { DEFAULT_ANTHROPIC_CHEAP_MODEL, VERY_CHEAP_MODEL } from './models';
+import {
+  DEFAULT_ANTHROPIC_CHEAP_MODEL,
+  openAiTokenLimitOptions,
+  VERY_CHEAP_MODEL,
+} from './models';
 import { layout2D } from './layout';
 import { buildKnnEdges, buildSimilarityMatrix } from './similarity';
 import type {
@@ -182,7 +186,7 @@ export async function nameCluster(
       const client = new OpenAI({ apiKey: config.apiKey });
       const res = await client.chat.completions.create({
         model,
-        max_tokens: 16,
+        ...openAiTokenLimitOptions(model, 16),
         temperature: 0,
         messages: [{ role: 'user', content: CLUSTER_LABEL_PROMPT(sample) }],
       });
