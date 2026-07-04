@@ -68,6 +68,7 @@
       display: flex; align-items: center; justify-content: center; z-index: 10;
     }
     .tc-logo { width: 120px; height: auto; animation: tc-logo-blink 2s infinite ease-in-out; }
+    .tc-loading-sub { font-size: 12px; opacity: 0.85; text-align: center; max-width: 300px; line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -104,11 +105,14 @@
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
-    function loadingHtml(message) {
-      return `<div class="tc-loading"><img class="tc-logo" src="ChimpLogoRed.svg" alt="TestChimp Logo" /><span>${esc(message)}</span></div>`;
+    function loadingHtml(message, subtitle) {
+      const sub = subtitle
+        ? `<span class="tc-loading-sub">${esc(subtitle)}</span>`
+        : '';
+      return `<div class="tc-loading"><img class="tc-logo" src="ChimpLogoRed.svg" alt="TestChimp Logo" /><span>${esc(message)}</span>${sub}</div>`;
     }
 
-    function showGraphLoading(message) {
+    function showGraphLoading(message, subtitle) {
       graphLoading = true;
       for (const id of ['graph-wrap', 'list-wrap']) {
         const el = document.getElementById(id);
@@ -118,7 +122,7 @@
           overlay.className = 'tc-loading-overlay';
           el.appendChild(overlay);
         }
-        overlay.innerHTML = loadingHtml(message);
+        overlay.innerHTML = loadingHtml(message, subtitle);
         overlay.style.display = 'flex';
       }
     }
@@ -213,7 +217,10 @@
 
     async function loadGraph() {
       const seq = ++graphLoadSeq;
-      showGraphLoading('Loading semantic graph…');
+      showGraphLoading(
+        'Loading semantic graph…',
+        'Naming clusters with AI — this usually takes ~30s',
+      );
       let loaded = false;
       try {
         const res = await fetch(graphUrl());
