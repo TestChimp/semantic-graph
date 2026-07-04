@@ -1,6 +1,6 @@
 {
   "name": "@testchimp/semantic-graph",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "CLI for test suite semantic similarity graph — scan, embed, and visualize duplicates",
   "bin": {
     "semantic-graph": "./dist/cli.js"
@@ -16,7 +16,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@testchimp/semantic-graph-core": "0.2.2",
+    "@testchimp/semantic-graph-core": "0.2.3",
     "express": "^4.21.2",
     "openai": "^4.77.0"
   },

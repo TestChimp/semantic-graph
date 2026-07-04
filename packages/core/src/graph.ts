@@ -101,23 +101,51 @@ export async function applyClusterNames(
     return graph;
   }
 
-  const provider = config.provider ?? 'openai';
-  const model = config.model ?? (provider === 'anthropic' ? DEFAULT_ANTHROPIC_CHEAP_MODEL : VERY_CHEAP_MODEL);
-  logNaming(config, `Naming ${graph.clusters.length} clusters (provider=${provider}, model=${model})`);
-
   const nodeById = new Map(graph.nodes.map((n) => [n.testId, n]));
-  const clusters: TestSemanticCluster[] = [];
+  const clusterInputs: ClusterNamingInput[] = [];
   for (const c of graph.clusters) {
     const titles = c.testIds
       .map((id) => nodeById.get(id)?.title)
       .filter((t): t is string => !!t);
-    if (!titles.length) {
-      clusters.push(c);
-      continue;
+    if (titles.length) {
+      clusterInputs.push({ clusterId: c.clusterId, titles });
     }
-    const label = await nameCluster(titles, config, c.clusterId);
-    clusters.push({ ...c, label: label ?? c.label });
   }
+
+  if (clusterInputs.length === 0) return graph;
+
+  const provider = config.provider ?? 'openai';
+  const model = config.model ?? (provider === 'anthropic' ? DEFAULT_ANTHROPIC_CHEAP_MODEL : VERY_CHEAP_MODEL);
+  const batchCount = Math.ceil(clusterInputs.length / BATCH_CLUSTER_LIMIT);
+  logNaming(
+    config,
+    `Naming ${clusterInputs.length} clusters in ${batchCount} LLM call${batchCount === 1 ? '' : 's'} (provider=${provider}, model=${model})`,
+  );
+
+  const labelById = new Map<number, string>();
+  for (let i = 0; i < clusterInputs.length; i += BATCH_CLUSTER_LIMIT) {
+    const chunk = clusterInputs.slice(i, i + BATCH_CLUSTER_LIMIT);
+    const batchLabels = await nameClusterBatch(chunk, config);
+    for (const [id, label] of batchLabels) {
+      labelById.set(id, label);
+    }
+  }
+
+  let llmNamed = 0;
+  const clusters: TestSemanticCluster[] = graph.clusters.map((c) => {
+    const titles = c.testIds
+      .map((id) => nodeById.get(id)?.title)
+      .filter((t): t is string => !!t);
+    const llmLabel = labelById.get(c.clusterId);
+    if (llmLabel) {
+      llmNamed++;
+      return { ...c, label: llmLabel };
+    }
+    const fallback = resolveClusterLabel(c, titles, config);
+    return { ...c, label: fallback };
+  });
+
+  logNaming(config, `LLM named ${llmNamed}/${clusterInputs.length} clusters`);
   return { ...graph, clusters };
 }
 
@@ -131,8 +159,24 @@ export interface ClusterNamingConfig {
   log?: (message: string) => void;
 }
 
-const CLUSTER_LABEL_PROMPT = (titles: string[]) =>
-  `Given these test titles, return a 1-3 word theme label (e.g. auth, checkout). Titles:\n${titles.map((t) => `- ${t}`).join('\n')}\nLabel only:`;
+const BATCH_CLUSTER_LIMIT = 50;
+const MAX_TITLES_PER_CLUSTER = 12;
+const MAX_LABEL_WORDS = 6;
+
+const SYSTEM_BATCH_NAMING_PROMPT = `You name test clusters for a semantic graph UI legend.
+
+For each cluster id, assign ONE short category name (1-3 words, max 40 characters). Examples: auth, checkout, api-contracts, settings-page, admin-tasks etc.
+
+Rules:
+- Summarize the shared theme across the test titles.
+- Do NOT list keywords, concatenate title words, or repeat test names.
+- Do NOT explain your reasoning.
+- Respond with valid JSON only, matching the required output schema.`;
+
+interface ClusterNamingInput {
+  clusterId: number;
+  titles: string[];
+}
 
 function logNaming(config: ClusterNamingConfig, message: string): void {
   config.log?.(message);
@@ -141,74 +185,139 @@ function logNaming(config: ClusterNamingConfig, message: string): void {
 function sanitizeClusterLabel(text: string | undefined): string | null {
   if (!text) return null;
   const trimmed = text.trim().replace(/^["']|["']$/g, '');
-  return trimmed.length > 0 && trimmed.length <= 40 ? trimmed : null;
+  if (trimmed.length === 0 || trimmed.length > 40) return null;
+  if (/^cluster$/i.test(trimmed)) return null;
+  if (isKeywordDumpLabel(trimmed)) return null;
+  return trimmed;
 }
 
-function rejectReason(text: string | undefined): string {
-  if (!text?.trim()) return 'empty response';
-  const trimmed = text.trim().replace(/^["']|["']$/g, '');
-  if (trimmed.length === 0) return 'empty after trim';
-  if (trimmed.length > 40) return `too long (${trimmed.length} chars)`;
-  return 'invalid';
+function isKeywordDumpLabel(label: string): boolean {
+  return label.trim().split(/\s+/).filter(Boolean).length > MAX_LABEL_WORDS;
 }
 
-function truncateForLog(text: string | undefined, maxLen = 80): string {
-  if (!text) return '';
-  const oneLine = text.replace(/\s+/g, ' ').trim();
-  if (oneLine.length <= maxLen) return oneLine;
-  return `${oneLine.slice(0, maxLen - 3)}...`;
+function buildBatchNamingPrompt(inputs: ClusterNamingInput[]): string {
+  const payload = {
+    clusters: inputs.map((c) => ({
+      id: c.clusterId,
+      titles: c.titles.slice(0, MAX_TITLES_PER_CLUSTER),
+    })),
+  };
+  return `Name each cluster below. Return JSON only in this exact shape:
+{"labels":[{"id":0,"label":"auth"},{"id":1,"label":"api-contracts"}]}
+
+Bad labels (never do this):
+- "http contract screen states json bunnyshell events workflow" (keyword list)
+- "scenario-mappings scenario-mappings test-runs execution-history" (repeated title words)
+
+Good labels: "auth", "test-runs", "api-contracts", "checkout"
+
+If titles share a domain, name the domain. If mixed, pick the dominant theme. Never enumerate words from titles.
+
+Input:
+${JSON.stringify(payload, null, 2)}`;
 }
 
-/** LLM cluster naming — uses VERY_CHEAP_MODEL on OpenAI by default. */
-export async function nameCluster(
-  titles: string[],
+function parseBatchLabelResponse(raw: string): Map<number, string> {
+  const trimmed = raw.trim();
+  const fence = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  const jsonText = fence ? fence[1].trim() : trimmed;
+  const parsed = JSON.parse(jsonText) as unknown;
+  if (!parsed || typeof parsed !== 'object' || !('labels' in parsed)) {
+    throw new Error('missing labels array');
+  }
+  const labels = (parsed as { labels: unknown }).labels;
+  if (!Array.isArray(labels)) throw new Error('labels is not an array');
+
+  const out = new Map<number, string>();
+  for (const entry of labels) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { id, label } = entry as { id?: unknown; label?: unknown };
+    if (typeof id !== 'number' || typeof label !== 'string') continue;
+    const clean = sanitizeClusterLabel(label);
+    if (clean) out.set(id, clean);
+  }
+  return out;
+}
+
+async function callBatchNamingLlm(
+  inputs: ClusterNamingInput[],
   config: ClusterNamingConfig,
-  clusterId?: number,
-): Promise<string | null> {
-  const prefix = clusterId != null ? `Cluster ${clusterId + 1}` : 'Cluster';
-  const sample = titles.slice(0, 20);
+): Promise<string> {
   const provider = config.provider ?? 'openai';
   const model = config.model ?? (provider === 'anthropic' ? DEFAULT_ANTHROPIC_CHEAP_MODEL : VERY_CHEAP_MODEL);
+  const userContent = buildBatchNamingPrompt(inputs);
 
-  let rawResponse: string | undefined;
-  try {
-    if (provider === 'anthropic') {
-      const client = new Anthropic({ apiKey: config.apiKey });
-      const res = await client.messages.create({
-        model,
-        max_tokens: 16,
-        messages: [{ role: 'user', content: CLUSTER_LABEL_PROMPT(sample) }],
-      });
-      const block = res.content.find((b) => b.type === 'text');
-      rawResponse = block?.type === 'text' ? block.text : undefined;
-    } else {
-      const client = new OpenAI({ apiKey: config.apiKey });
-      const res = await client.chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: CLUSTER_LABEL_PROMPT(sample) }],
-      });
-      rawResponse = res.choices[0]?.message?.content?.trim();
+  if (provider === 'anthropic') {
+    const client = new Anthropic({ apiKey: config.apiKey });
+    const res = await client.messages.create({
+      model,
+      max_tokens: Math.min(4096, 256 + inputs.length * 32),
+      system: SYSTEM_BATCH_NAMING_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    const block = res.content.find((b) => b.type === 'text');
+    if (block?.type !== 'text' || !block.text.trim()) {
+      throw new Error('empty Anthropic response');
     }
-    const label = sanitizeClusterLabel(rawResponse);
-    if (label && !/^cluster$/i.test(label)) {
-      logNaming(config, `${prefix} (${titles.length} tests): LLM → "${label}"`);
-      return label;
-    }
-    logNaming(
-      config,
-      `${prefix}: rejected LLM response (${rejectReason(rawResponse)}): "${truncateForLog(rawResponse)}"`,
-    );
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    logNaming(config, `${prefix}: LLM error: ${msg}`);
+    return block.text.trim();
   }
 
+  const client = new OpenAI({ apiKey: config.apiKey });
+  const res = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: SYSTEM_BATCH_NAMING_PROMPT },
+      { role: 'user', content: userContent },
+    ],
+    response_format: { type: 'json_object' },
+  });
+  const content = res.choices[0]?.message?.content?.trim();
+  if (!content) throw new Error('empty OpenAI response');
+  return content;
+}
+
+async function nameClusterBatch(
+  inputs: ClusterNamingInput[],
+  config: ClusterNamingConfig,
+): Promise<Map<number, string>> {
+  if (inputs.length === 0) return new Map();
+  try {
+    const raw = await callBatchNamingLlm(inputs, config);
+    return parseBatchLabelResponse(raw);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logNaming(config, `Batch LLM naming failed: ${msg}`);
+    return new Map();
+  }
+}
+
+function resolveClusterLabel(
+  cluster: TestSemanticCluster,
+  titles: string[],
+  config: ClusterNamingConfig,
+): string {
+  const prefix = `Cluster ${cluster.clusterId + 1}`;
   const heuristic = heuristicClusterLabel(titles);
   if (heuristic) {
     logNaming(config, `${prefix}: using heuristic label "${heuristic}"`);
     return heuristic;
   }
-
   logNaming(config, `${prefix}: keeping placeholder label`);
-  return null;
+  return cluster.label ?? prefix;
+}
+
+/** @deprecated Use applyClusterNames — kept for callers naming a single cluster. */
+export async function nameCluster(
+  titles: string[],
+  config: ClusterNamingConfig,
+  clusterId?: number,
+): Promise<string | null> {
+  if (clusterId == null) {
+    const heuristic = heuristicClusterLabel(titles);
+    return heuristic;
+  }
+  const batch = await nameClusterBatch([{ clusterId, titles }], config);
+  const label = batch.get(clusterId);
+  if (label) return label;
+  return heuristicClusterLabel(titles);
 }
