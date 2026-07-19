@@ -15,6 +15,8 @@ function mulberry32(seed: number): () => number {
 export function layout2D(embeddings: number[][], randomState = 42): Array<{ x: number; y: number }> {
   if (embeddings.length === 0) return [];
   if (embeddings.length === 1) return [{ x: 0, y: 0 }];
+  // UMAP requires nNeighbors < nSamples; with 2 points Math.max(2, n-1) yields nNeighbors=2 and throws.
+  if (embeddings.length === 2) return [{ x: -0.5, y: 0 }, { x: 0.5, y: 0 }];
   const nNeighbors = Math.min(15, Math.max(2, embeddings.length - 1));
   const umap = new UMAP({
     nComponents: 2,
