@@ -34,15 +34,22 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/TestChimp/semantic-graph.git",
+    "url": "git+https://github.com/TestChimp/semantic-graph.git",
     "directory": "packages/cli"
   },
+  "homepage": "https://github.com/TestChimp/semantic-graph#readme",
+  "bugs": {
+    "url": "https://github.com/TestChimp/semantic-graph/issues"
+  },
   "keywords": [
-    "testchimp",
     "playwright",
     "testing",
+    "test-deduplication",
     "embeddings",
     "semantic-similarity",
-    "duplicate-tests"
+    "test-suite",
+    "cli",
+    "duplicate-tests",
+    "testchimp"
   ]
 }
