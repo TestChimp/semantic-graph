@@ -1,6 +1,8 @@
 # @testchimp/semantic-graph
 
-Test suite semantic similarity — find duplicate and related tests via embeddings, clustering, and a 2D graph.
+Test suite semantic similarity - find duplicate and related tests via embeddings, clustering, and a 2D graph.
+
+**Works with Playwright-style test files** using `test()` and `test.describe()` syntax.
 
 ## Packages
 
@@ -12,7 +14,7 @@ Test suite semantic similarity — find duplicate and related tests via embeddin
 
 ## Quick start (OpenAI)
 
-One API key for embeddings and LLM (cluster naming). No database required — embeddings are computed in memory each run.
+One API key for embeddings and LLM (cluster naming). No database required - embeddings are computed in memory each run.
 
 ```bash
 export PROVIDER=openai
@@ -32,8 +34,8 @@ Anthropic does not ship an embedding API. Use **Voyage** for embeddings and **Cl
 
 ```bash
 export PROVIDER=anthropic
-export API_KEY=sk-ant-...          # Anthropic — cluster naming / LLM
-export VOYAGE_API_KEY=pa-...       # Voyage — embeddings
+export API_KEY=sk-ant-...          # Anthropic - cluster naming / LLM
+export VOYAGE_API_KEY=pa-...       # Voyage - embeddings
 # optional:
 # export EMBEDDING_MODEL=voyage-4
 # export LLM_MODEL=claude-3-5-haiku-latest
@@ -68,7 +70,7 @@ Legacy name `EMBEDDING_PROVIDER` is still accepted as an alias for `PROVIDER`.
 
 ## Continuous governance with TestChimp
 
-This CLI is a local, standalone view of semantic similarity in your test suite. For **continuous** duplicate detection and broader quality governance — requirement traceability, release confidence, and keeping your suite healthy as it grows — see [TestChimp](https://testchimp.io).
+This CLI is a local, standalone view of semantic similarity in your test suite. For **continuous** duplicate detection and broader quality governance - requirement traceability, release confidence, and keeping your suite healthy as it grows - see [TestChimp](https://testchimp.io).
 
 ## Monorepo
 
